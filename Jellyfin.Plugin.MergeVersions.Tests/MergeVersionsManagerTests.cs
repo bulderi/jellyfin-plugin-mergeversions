@@ -166,21 +166,13 @@ public class MergeVersionsManagerTests
     }
 
     [Fact]
-    public async Task IncrementalBatchSkipsAlreadyMergedGroup()
+    public async Task IncrementalBatchSkipsNativeLocalAlternateGroup()
     {
         InitializePlugin();
         var primary = new Episode { Id = Guid.NewGuid(), Name = "Episode" };
         var alternate = new Episode { Id = Guid.NewGuid(), Name = "Episode" };
         primary.ProviderIds["Tvdb"] = "12345";
         alternate.ProviderIds["Tvdb"] = "12345";
-        primary.LinkedAlternateVersions =
-        [
-            new LinkedChild
-            {
-                ItemId = alternate.Id,
-                Type = LinkedChildType.LinkedAlternateVersion
-            }
-        ];
         alternate.SetPrimaryVersionId(primary.Id);
         var library = new Mock<ILibraryManager>(MockBehavior.Strict);
         library.Setup(manager => manager.GetItemList(It.IsAny<InternalItemsQuery>()))

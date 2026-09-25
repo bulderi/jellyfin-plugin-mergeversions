@@ -390,17 +390,9 @@ namespace Jellyfin.Plugin.MergeVersions
             }
 
             var primary = primaries[0];
-            var expectedAlternates = items
-                .Where(item => item.Id != primary.Id)
-                .Select(item => item.Id)
-                .ToHashSet();
-            var linkedAlternates = primary.LinkedAlternateVersions
-                .Where(link => link.ItemId.HasValue)
-                .Select(link => link.ItemId!.Value)
-                .ToHashSet();
-
-            return !expectedAlternates.SetEquals(linkedAlternates)
-                || items.Any(item => item.Id != primary.Id && item.PrimaryVersionId != primary.Id);
+            // Native merges represent local alternate versions through PrimaryVersionId.
+            // LinkedAlternateVersions is a separate relationship used for different cuts.
+            return items.Any(item => item.Id != primary.Id && item.PrimaryVersionId != primary.Id);
         }
 
         private bool IsEligible(BaseItem item)
