@@ -10,6 +10,10 @@ namespace Jellyfin.Plugin.MergeVersions
         {
             serviceCollection.AddSingleton<IVideoVersions, JellyfinVideoVersions>();
             serviceCollection.AddSingleton<MergeVersionsManager>();
+            serviceCollection.AddSingleton<IIncrementalMergeProcessor>(
+                serviceProvider => serviceProvider.GetRequiredService<MergeVersionsManager>());
+            serviceCollection.AddSingleton<IIncrementalMergeQueueStore, PersistentIncrementalMergeQueueStore>();
+            serviceCollection.AddHostedService<IncrementalMergeService>();
         }
     }
 }

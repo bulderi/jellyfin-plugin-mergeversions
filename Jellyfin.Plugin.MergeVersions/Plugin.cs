@@ -8,7 +8,7 @@ using MediaBrowser.Common.Plugins;
 
 namespace Jellyfin.Plugin.MergeVersions
 {
-    public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages 
+    public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
     {
         public Plugin(IServerApplicationPaths appPaths, IXmlSerializer xmlSerializer)
             : base(appPaths, xmlSerializer)

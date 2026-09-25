@@ -30,15 +30,7 @@ namespace Jellyfin.Plugin.MergeVersions.ScheduledTasks
 
         public IEnumerable<TaskTriggerInfo> GetDefaultTriggers()
         {
-            // Run this task every 24 hours
-            return new[]
-            {
-                new TaskTriggerInfo
-                {
-                    Type = TaskTriggerInfoType.IntervalTrigger,
-                    IntervalTicks = TimeSpan.FromHours(24).Ticks
-                }
-            };
+            return Array.Empty<TaskTriggerInfo>();
         }
 
         public Task ExecuteAsync(IProgress<double> progress, CancellationToken cancellationToken)
@@ -76,15 +68,7 @@ namespace Jellyfin.Plugin.MergeVersions.ScheduledTasks
 
         public IEnumerable<TaskTriggerInfo> GetDefaultTriggers()
         {
-            // Run this task every 24 hours
-            return new[]
-            {
-                new TaskTriggerInfo
-                {
-                    Type = TaskTriggerInfoType.IntervalTrigger,
-                    IntervalTicks = TimeSpan.FromHours(24).Ticks
-                }
-            };
+            return Array.Empty<TaskTriggerInfo>();
         }
 
         public Task ExecuteAsync(IProgress<double> progress, CancellationToken cancellationToken)

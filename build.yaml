@@ -1,15 +1,15 @@
 ---
 name: "jellyfin-plugin-mergeVersions"
-guid: "bc4aad2e-d3d0-4725-a5e2-fd07949e5b42"
-version: "5" # Please increment with each pull request
-jellyfin_version: "10.7.0" # The earliest binary-compatible version
-owner: "jellyfin"
+guid: "f21bbed8-3a97-4d8b-88b2-48aaa65427cb"
+version: "12.1.0.0"
+jellyfin_version: "12.1.0"
+owner: "bulderi"
 nicename: "Merge Versions"
-description: "Jellyfin Merge Versions plugin is a plugin that automatically groups every repeated movie;"
-overview: "Jellyfin Merge Versions plugin is a plugin that automatically groups every repeated movie;"
+description: "Automatically groups alternate movie and episode versions."
+overview: "Efficient incremental version merging for large Jellyfin libraries."
 category: "General"
 artifacts:
   - "Jellyfin.Plugin.MergeVersions.dll"
 build_type: "dotnet"
 dotnet_configuration: "Release"
-dotnet_framework: "net5.0"
+dotnet_framework: "net10.0"

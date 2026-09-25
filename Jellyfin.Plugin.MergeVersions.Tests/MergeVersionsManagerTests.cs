@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using Jellyfin.Data.Enums;
 using Jellyfin.Plugin.MergeVersions.Api;
 using Jellyfin.Plugin.MergeVersions.Configuration;
 using Jellyfin.Plugin.MergeVersions.ScheduledTasks;
@@ -8,6 +9,7 @@ using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
+using MediaBrowser.Model.Entities;
 using MediaBrowser.Model.IO;
 using MediaBrowser.Model.Serialization;
 using Microsoft.AspNetCore.Authorization;
@@ -124,11 +126,135 @@ public class MergeVersionsManagerTests
         Assert.Equal(Policies.RequiresElevation, authorization.Policy);
     }
 
+    [Fact]
+    public async Task IncrementalBatchUsesProviderFilteredQuery()
+    {
+        InitializePlugin();
+        var episodes = Enumerable.Range(0, 2).Select(_ =>
+        {
+            var episode = new Episode { Id = Guid.NewGuid(), Name = "Episode" };
+            episode.ProviderIds["Tvdb"] = "12345";
+            return (BaseItem)episode;
+        }).ToList();
+        InternalItemsQuery capturedQuery = null;
+        var library = new Mock<ILibraryManager>(MockBehavior.Strict);
+        library.Setup(manager => manager.GetItemList(It.IsAny<InternalItemsQuery>()))
+            .Callback<InternalItemsQuery>(query => capturedQuery = query)
+            .Returns(episodes);
+        var versions = new Mock<IVideoVersions>(MockBehavior.Strict);
+        versions.Setup(service => service.MergeAsync(
+                It.Is<Guid[]>(ids => ids.Length == 2),
+                null,
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        using var manager = new MergeVersionsManager(
+            library.Object,
+            NullLogger<MergeVersionsManager>.Instance,
+            Mock.Of<IFileSystem>(),
+            versions.Object);
+        var processor = (IIncrementalMergeProcessor)manager;
+        Assert.True(processor.TryCreateIncrementalTarget(episodes[0], out var target));
+
+        var merged = await processor.MergeIncrementalBatchAsync([target!], default);
+
+        Assert.Equal(1, merged);
+        Assert.NotNull(capturedQuery);
+        Assert.Null(capturedQuery!.StartIndex);
+        Assert.Equal(["12345"], capturedQuery.HasAnyProviderIds!["Tvdb"]);
+        Assert.Equal([BaseItemKind.Episode], capturedQuery.IncludeItemTypes);
+        versions.VerifyAll();
+    }
+
+    [Fact]
+    public async Task IncrementalBatchSkipsAlreadyMergedGroup()
+    {
+        InitializePlugin();
+        var primary = new Episode { Id = Guid.NewGuid(), Name = "Episode" };
+        var alternate = new Episode { Id = Guid.NewGuid(), Name = "Episode" };
+        primary.ProviderIds["Tvdb"] = "12345";
+        alternate.ProviderIds["Tvdb"] = "12345";
+        primary.LinkedAlternateVersions =
+        [
+            new LinkedChild
+            {
+                ItemId = alternate.Id,
+                Type = LinkedChildType.LinkedAlternateVersion
+            }
+        ];
+        alternate.SetPrimaryVersionId(primary.Id);
+        var library = new Mock<ILibraryManager>(MockBehavior.Strict);
+        library.Setup(manager => manager.GetItemList(It.IsAny<InternalItemsQuery>()))
+            .Returns([primary, alternate]);
+        var versions = new Mock<IVideoVersions>(MockBehavior.Strict);
+        using var manager = new MergeVersionsManager(
+            library.Object,
+            NullLogger<MergeVersionsManager>.Instance,
+            Mock.Of<IFileSystem>(),
+            versions.Object);
+        var processor = (IIncrementalMergeProcessor)manager;
+        Assert.True(processor.TryCreateIncrementalTarget(primary, out var target));
+
+        var merged = await processor.MergeIncrementalBatchAsync([target!], default);
+
+        Assert.Equal(0, merged);
+        Assert.Empty(versions.Invocations);
+    }
+
+    [Fact]
+    public async Task IncrementalBatchWaitsForActiveFullScan()
+    {
+        InitializePlugin();
+        var episodes = Enumerable.Range(0, 2).Select(_ =>
+        {
+            var episode = new Episode { Id = Guid.NewGuid(), Name = "Episode" };
+            episode.ProviderIds["Tvdb"] = "12345";
+            return (BaseItem)episode;
+        }).ToList();
+        var library = new Mock<ILibraryManager>(MockBehavior.Strict);
+        library.Setup(manager => manager.GetItemList(It.IsAny<InternalItemsQuery>()))
+            .Returns(episodes);
+        var firstMergeStarted = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirstMerge = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var callCount = 0;
+        var versions = new Mock<IVideoVersions>(MockBehavior.Strict);
+        versions.Setup(service => service.MergeAsync(
+                It.IsAny<Guid[]>(),
+                null,
+                It.IsAny<CancellationToken>()))
+            .Returns(() =>
+            {
+                if (Interlocked.Increment(ref callCount) == 1)
+                {
+                    firstMergeStarted.SetResult();
+                    return releaseFirstMerge.Task;
+                }
+
+                return Task.CompletedTask;
+            });
+        using var manager = new MergeVersionsManager(
+            library.Object,
+            NullLogger<MergeVersionsManager>.Instance,
+            Mock.Of<IFileSystem>(),
+            versions.Object);
+        var processor = (IIncrementalMergeProcessor)manager;
+        Assert.True(processor.TryCreateIncrementalTarget(episodes[0], out var target));
+
+        var fullScan = manager.MergeEpisodesAsync(null);
+        await firstMergeStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var incremental = processor.MergeIncrementalBatchAsync([target!], default);
+
+        await Task.Delay(50);
+        Assert.False(incremental.IsCompleted);
+        releaseFirstMerge.SetResult();
+        await Task.WhenAll(fullScan, incremental).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(2, callCount);
+    }
+
     private static MergeVersionsManager CreateManager(bool movies, Mock<IVideoVersions> versions, int groups = 1)
     {
-        var paths = new Mock<IServerApplicationPaths>();
-        paths.SetupGet(p => p.PluginsPath).Returns(AppContext.BaseDirectory);
-        _ = new TestPlugin(paths.Object);
+        InitializePlugin();
 
         var items = Enumerable.Range(0, groups * 2).Select(index =>
         {
@@ -142,6 +268,13 @@ public class MergeVersionsManagerTests
         library.Setup(l => l.GetItemList(It.IsAny<InternalItemsQuery>())).Returns(items);
         return new MergeVersionsManager(library.Object, NullLogger<MergeVersionsManager>.Instance,
             Mock.Of<IFileSystem>(), versions.Object);
+    }
+
+    private static void InitializePlugin()
+    {
+        var paths = new Mock<IServerApplicationPaths>();
+        paths.SetupGet(path => path.PluginsPath).Returns(AppContext.BaseDirectory);
+        _ = new TestPlugin(paths.Object);
     }
 
     private sealed class RecordedProgress : IProgress<double>
