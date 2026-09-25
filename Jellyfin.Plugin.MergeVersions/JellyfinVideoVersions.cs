@@ -80,9 +80,11 @@ namespace Jellyfin.Plugin.MergeVersions
             if (result is not NoContentResult)
             {
                 var status = (result as IStatusCodeActionResult)?.StatusCode;
-                var detail = (result as ObjectResult)?.Value;
-                throw new InvalidOperationException(
-                    $"Jellyfin VideosController.{method.Name} failed: {status?.ToString() ?? result?.GetType().Name ?? "null result"}. {detail}");
+                var detail = (result as ObjectResult)?.Value?.ToString();
+                throw new VideoVersionOperationException(
+                    method.Name,
+                    status,
+                    detail ?? result?.GetType().Name ?? "null result");
             }
         }
 

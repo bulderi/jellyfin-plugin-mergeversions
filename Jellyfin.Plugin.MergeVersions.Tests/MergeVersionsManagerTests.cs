@@ -141,6 +141,7 @@ public class MergeVersionsManagerTests
         library.Setup(manager => manager.GetItemList(It.IsAny<InternalItemsQuery>()))
             .Callback<InternalItemsQuery>(query => capturedQuery = query)
             .Returns(episodes);
+        SetupCurrentItems(library, episodes);
         var versions = new Mock<IVideoVersions>(MockBehavior.Strict);
         versions.Setup(service => service.MergeAsync(
                 It.Is<Guid[]>(ids => ids.Length == 2),
@@ -205,6 +206,7 @@ public class MergeVersionsManagerTests
         var library = new Mock<ILibraryManager>(MockBehavior.Strict);
         library.Setup(manager => manager.GetItemList(It.IsAny<InternalItemsQuery>()))
             .Returns(episodes);
+        SetupCurrentItems(library, episodes);
         var firstMergeStarted = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseFirstMerge = new TaskCompletionSource(
@@ -244,6 +246,73 @@ public class MergeVersionsManagerTests
         Assert.Equal(2, callCount);
     }
 
+    [Fact]
+    public async Task FullScanSkipsGroupWithAnItemRemovedAfterDiscovery()
+    {
+        InitializePlugin();
+        var episodes = Enumerable.Range(0, 2).Select(_ =>
+        {
+            var episode = new Episode { Id = Guid.NewGuid(), Name = "Episode" };
+            episode.ProviderIds["Tvdb"] = "12345";
+            return (BaseItem)episode;
+        }).ToList();
+        var library = new Mock<ILibraryManager>(MockBehavior.Strict);
+        library.Setup(manager => manager.GetItemList(It.IsAny<InternalItemsQuery>()))
+            .Returns(episodes);
+        library.Setup(manager => manager.GetItemById(episodes[0].Id)).Returns(episodes[0]);
+        library.Setup(manager => manager.GetItemById(episodes[1].Id)).Returns((BaseItem)null);
+        var versions = new Mock<IVideoVersions>(MockBehavior.Strict);
+        using var manager = new MergeVersionsManager(
+            library.Object,
+            NullLogger<MergeVersionsManager>.Instance,
+            Mock.Of<IFileSystem>(),
+            versions.Object);
+        var progress = new RecordedProgress();
+
+        await manager.MergeEpisodesAsync(progress);
+
+        Assert.Empty(versions.Invocations);
+        Assert.Equal(100d, progress.Values.Last());
+    }
+
+    [Fact]
+    public async Task ConcurrentRemovalResponseDoesNotFailFullScan()
+    {
+        var versions = new Mock<IVideoVersions>(MockBehavior.Strict);
+        versions.Setup(service => service.MergeAsync(
+                It.IsAny<Guid[]>(),
+                null,
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new VideoVersionOperationException(
+                "MergeVersions",
+                400,
+                "Please supply at least two videos to merge."));
+        using var manager = CreateManager(false, versions);
+        var progress = new RecordedProgress();
+
+        await manager.MergeEpisodesAsync(progress);
+
+        Assert.Equal(100d, progress.Values.Last());
+        versions.VerifyAll();
+    }
+
+    [Fact]
+    public async Task UnrelatedBadRequestStillFailsFullScan()
+    {
+        var versions = new Mock<IVideoVersions>(MockBehavior.Strict);
+        versions.Setup(service => service.MergeAsync(
+                It.IsAny<Guid[]>(),
+                null,
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new VideoVersionOperationException(
+                "MergeVersions",
+                400,
+                "Different validation failure"));
+        using var manager = CreateManager(false, versions);
+
+        await Assert.ThrowsAsync<VideoVersionOperationException>(() => manager.MergeEpisodesAsync(null));
+    }
+
     private static MergeVersionsManager CreateManager(bool movies, Mock<IVideoVersions> versions, int groups = 1)
     {
         InitializePlugin();
@@ -258,8 +327,15 @@ public class MergeVersionsManagerTests
         }).ToList();
         var library = new Mock<ILibraryManager>(MockBehavior.Strict);
         library.Setup(l => l.GetItemList(It.IsAny<InternalItemsQuery>())).Returns(items);
+        SetupCurrentItems(library, items);
         return new MergeVersionsManager(library.Object, NullLogger<MergeVersionsManager>.Instance,
             Mock.Of<IFileSystem>(), versions.Object);
+    }
+
+    private static void SetupCurrentItems(Mock<ILibraryManager> library, IReadOnlyCollection<BaseItem> items)
+    {
+        library.Setup(manager => manager.GetItemById(It.IsAny<Guid>()))
+            .Returns<Guid>(id => items.SingleOrDefault(item => item.Id == id));
     }
 
     private static void InitializePlugin()

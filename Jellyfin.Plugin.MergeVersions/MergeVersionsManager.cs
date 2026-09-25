@@ -61,8 +61,12 @@ namespace Jellyfin.Plugin.MergeVersions
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var first = movies.First();
-                _logger.LogInformation("Merging {Name} ({Year})", first.Name, first.ProductionYear);
-                await _videoVersions.MergeAsync(movies.Select(e => e.Id).ToArray(), user, cancellationToken).ConfigureAwait(false);
+                var target = CreateTarget(first);
+                if (target is not null)
+                {
+                    await MergeCurrentGroupAsync(target.Key, movies, user, cancellationToken).ConfigureAwait(false);
+                }
+
                 progress?.Report(++current / (double)duplicateMovies.Count * 100);
             }
 
@@ -129,9 +133,12 @@ namespace Jellyfin.Plugin.MergeVersions
             foreach (var episodeGroup in duplicateEpisodes)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var first = episodeGroup.First();
-                _logger.LogInformation("Merging {Name} ({Year})", first.Name, first.ProductionYear);
-                await _videoVersions.MergeAsync(episodeGroup.Select(e => e.Id).ToArray(), user, cancellationToken).ConfigureAwait(false);
+                await MergeCurrentGroupAsync(
+                        episodeGroup.Key,
+                        episodeGroup,
+                        user,
+                        cancellationToken)
+                    .ConfigureAwait(false);
                 progress?.Report(++current / (double)duplicateEpisodes.Count * 100);
             }
 
@@ -249,18 +256,18 @@ namespace Jellyfin.Plugin.MergeVersions
                 .Select(video => (Video: video, Target: CreateTarget(video)))
                 .Where(entry => entry.Target is not null && targetKeys.Contains(entry.Target.Key))
                 .GroupBy(entry => entry.Target!.Key, StringComparer.OrdinalIgnoreCase)
-                .Select(group => group.Select(entry => entry.Video).ToList())
-                .Where(group => group.Count > 1 && NeedsMerge(group))
+                .Select(group => (group.Key, Videos: group.Select(entry => entry.Video).ToList()))
+                .Where(group => group.Videos.Count > 1 && NeedsMerge(group.Videos))
                 .ToList();
 
             var mergedGroups = 0;
             foreach (var group in groups)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                await _videoVersions
-                    .MergeAsync(group.Select(video => video.Id).ToArray(), null, cancellationToken)
-                    .ConfigureAwait(false);
-                mergedGroups++;
+                if (await MergeCurrentGroupAsync(group.Key, group.Videos, null, cancellationToken).ConfigureAwait(false))
+                {
+                    mergedGroups++;
+                }
             }
 
             return mergedGroups;
@@ -394,6 +401,51 @@ namespace Jellyfin.Plugin.MergeVersions
             // LinkedAlternateVersions is a separate relationship used for different cuts.
             return items.Any(item => item.Id != primary.Id && item.PrimaryVersionId != primary.Id);
         }
+
+        private async Task<bool> MergeCurrentGroupAsync(
+            string expectedKey,
+            IEnumerable<Video> plannedVersions,
+            ClaimsPrincipal user,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var currentVersions = plannedVersions
+                .Select(version => _libraryManager.GetItemById(version.Id))
+                .OfType<Video>()
+                .Where(IsEligible)
+                .Where(version => string.Equals(
+                    CreateTarget(version)?.Key,
+                    expectedKey,
+                    StringComparison.OrdinalIgnoreCase))
+                .DistinctBy(version => version.Id)
+                .ToList();
+
+            if (currentVersions.Count < 2 || !NeedsMerge(currentVersions))
+            {
+                return false;
+            }
+
+            var first = currentVersions[0];
+            _logger.LogInformation("Merging {Name} ({Year})", first.Name, first.ProductionYear);
+
+            try
+            {
+                await _videoVersions
+                    .MergeAsync(currentVersions.Select(version => version.Id).ToArray(), user, cancellationToken)
+                    .ConfigureAwait(false);
+                return true;
+            }
+            catch (VideoVersionOperationException ex) when (IsInsufficientMergeCandidateFailure(ex))
+            {
+                _logger.LogInformation("Skipping a version group that changed during processing");
+                return false;
+            }
+        }
+
+        private static bool IsInsufficientMergeCandidateFailure(VideoVersionOperationException exception)
+            => exception.StatusCode == 400
+                && exception.Detail.Contains("at least two videos", StringComparison.OrdinalIgnoreCase);
 
         private bool IsEligible(BaseItem item)
         {

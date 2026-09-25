@@ -69,9 +69,11 @@ public class JellyfinVideoVersionsTests
         var state = services.GetRequiredService<InvocationState>();
         state.Run = () => Task.FromResult<ActionResult>(new ObjectResult("native error") { StatusCode = status });
 
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        var exception = await Assert.ThrowsAsync<VideoVersionOperationException>(() =>
             services.GetRequiredService<IVideoVersions>().SplitAsync(Guid.NewGuid(), null, default));
 
+        Assert.Equal(status, exception.StatusCode);
+        Assert.Equal("native error", exception.Detail);
         Assert.Contains(status.ToString(), exception.Message);
         Assert.Contains("native error", exception.Message);
         Assert.True(Assert.Single(state.Controllers).Disposed);

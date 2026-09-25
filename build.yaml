@@ -1,7 +1,7 @@
 ---
 name: "jellyfin-plugin-mergeVersions"
 guid: "f21bbed8-3a97-4d8b-88b2-48aaa65427cb"
-version: "12.1.0.1"
+version: "12.1.0.2"
 jellyfin_version: "12.1.0"
 owner: "bulderi"
 nicename: "Merge Versions"

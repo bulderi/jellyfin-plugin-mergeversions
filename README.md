@@ -19,6 +19,8 @@ Updates caused by a merge are ignored by the listener, preventing a merge feedba
 
 The full-library movie and episode tasks remain available as manual repair operations, but no longer have a default daily trigger. Existing installations may retain their saved task triggers; disable those triggers after upgrading if full daily scans are not wanted.
 
+Full-library tasks revalidate every planned group immediately before calling Jellyfin's native merge action. Groups that were removed, changed, or completed after the scan began are skipped. If the final candidate disappears in the narrow interval between revalidation and the native action, that group is also skipped without failing the remaining run.
+
 Pending work is journaled in Jellyfin's plugin configuration directory and restored after a restart. A target is removed from the journal only after its batch completes successfully. The journal is compacted automatically and created with owner-only permissions on Unix systems.
 
 ## User guide
@@ -51,6 +53,6 @@ dotnet publish Jellyfin.Plugin.MergeVersions/Jellyfin.Plugin.MergeVersions.cspro
 dotnet test Jellyfin.Plugin.MergeVersions.sln --configuration Release
 ```
 
-The tests cover controller discovery and dispatch, DI scope lifetime, error handling, authorization requirements, asynchronous completion, cancellation, targeted provider queries, already-merged groups, queue changes received during an active batch and persistent queue recovery. They do not replace a merge/split smoke test against a Jellyfin test library.
+The tests cover controller discovery and dispatch, DI scope lifetime, error handling, authorization requirements, asynchronous completion, cancellation, targeted provider queries, already-merged groups, concurrent library removals, queue changes received during an active batch and persistent queue recovery. They do not replace a merge/split smoke test against a Jellyfin test library.
 
 The adapter discovers `Jellyfin.Api.Controllers.VideosController` through MVC and resolves it from Jellyfin's service container. If Jellyfin changes the action signatures, operations fail with a compatibility error instead of falling back to manual relationship changes.
